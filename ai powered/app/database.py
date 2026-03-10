@@ -21,7 +21,7 @@ def init_db():
     finally:
         conn.close()
 
-def creete_user(username, password_hash, role = "user"):
+def create_user(username, password_hash, role = "user"):
     """Create a new user in the database."""
     conn = get_db_connection()
     try:
