@@ -4,7 +4,7 @@ import logging
 
 def hash_password(password):
     """Hashes a password using bcrypt."""
-    return bcrypt.hastpw(password.encode('utf-8'),bcrypt.gensalt()).decode('utf-8')
+    return bcrypt.hashpw(password.encode('utf-8'),bcrypt.gensalt()).decode('utf-8')
 
 def verify_password(password, hashed_password):
     """Verifies a password against the stored hash."""

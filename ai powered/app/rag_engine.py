@@ -124,7 +124,7 @@ def get_revelant_context(query, k=2):
     embeddings = OllamaEmbeddings(model="tinyllama")
     try:
         db = FAISS.load_local(FAISS_INDEX_PATH,embeddings,allow_dangerous_deserialization=True)
-        docs = db.similarity_search(query,k=k)
+        docs = db.similarity_search(query,k=k) # threshold - 0.8 
         return "\n\n".join([doc.page_content for doc in docs])
     except Exception as e:
         logging.error(f"Error retreving context: {e}")

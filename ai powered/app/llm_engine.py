@@ -7,7 +7,7 @@ import rag_engine
 #Configure logging
 logging.basicConfig(level=logging.INFO, format = '%(asctime)s - %(levelname)s - %(message)s')
 
-MODEL_NAME = "llama3.2:1b"
+MODEL_NAME = "phi3"
 
 def check_model_availability():
     """Checks if th model is avaliable locally, pulls if not."""
