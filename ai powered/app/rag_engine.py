@@ -2,6 +2,7 @@ import os
 import shutil
 import logging
 import ollama
+from typing import Dict, List
 from langchain_community.vectorstores import FAISS
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -120,20 +121,54 @@ def ingest_documents():
 
 def get_relevant_context(query, k=2):
     """
-    Retrieves the most relevant context chunks for a given query.
-    k=2 for efficiency and speed.
+    Retrieves the most relevant context chunks and similarity metadata.
     """
     if not os.path.exists(FAISS_INDEX_PATH):
-        return ""
+        return {
+            "context_text": "",
+            "kb_context_found": False,
+            "retrieval_score": 0.0,
+            "matches": [],
+        }
 
     embeddings = OllamaEmbeddings(model="tinyllama")
     try:
         db = FAISS.load_local(FAISS_INDEX_PATH, embeddings, allow_dangerous_deserialization=True)
-        docs = db.similarity_search(query, k=k)
-        return "\n\n".join([d.page_content for d in docs])
+        docs_with_scores = db.similarity_search_with_score(query, k=k)
+
+        matches: List[Dict[str, object]] = []
+        for doc, distance in docs_with_scores:
+            similarity_score = max(0.0, min(1.0, 1.0 / (1.0 + float(distance))))
+            matches.append(
+                {
+                    "content": doc.page_content,
+                    "metadata": doc.metadata,
+                    "distance": float(distance),
+                    "similarity_score": similarity_score,
+                }
+            )
+
+        context_text = "\n\n".join(match["content"] for match in matches)
+        retrieval_score = (
+            sum(match["similarity_score"] for match in matches) / len(matches)
+            if matches
+            else 0.0
+        )
+        return {
+            "context_text": context_text,
+            "kb_context_found": bool(matches),
+            "retrieval_score": round(retrieval_score, 3),
+            "matches": matches,
+        }
     except Exception as e:
         logging.error(f"Error retrieving context: {e}")
-        return ""
+        return {
+            "context_text": "",
+            "kb_context_found": False,
+            "retrieval_score": 0.0,
+            "matches": [],
+            "error": str(e),
+        }
 
 if __name__ == "__main__":
     ingest_documents()
