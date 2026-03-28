@@ -92,6 +92,7 @@ def _send_slack_alert(event_row):
 
 
 def _upsert_knowledge_gap(cursor, ticket_id, category, normalized_query, confidence_score, suggested_kb_filename):
+    """Updates the existing knowledge gap table"""
     gap_alert_threshold = get_gap_alert_threshold()
     gap_group_key = build_gap_group_key(category, normalized_query)
     display_query = normalized_query.title()
@@ -286,3 +287,93 @@ def submit_ticket(title, description, category, priority, user_id):
     saved_ticket = get_ticket_by_id(ticket_id)
     saved_ticket["alert_status"] = alert_result["status"] if alert_result else None
     return saved_ticket
+
+def submit_feedback(ticket_id, feedback_value, user_id):
+    """ Stores one helpful/not_helpful response for a user's ticket."""
+    if feedback_value not in {"helpful", "not_helpful"}:
+        raise ValueError("Invalid feedback value. Must be 'helpful' or 'not_helpful'.")
+    
+    conn = database.get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE tickets 
+            SET feedback_value = ?,feedback_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND user_id = ? AND feedback_value IS NULL
+            """,
+            (feedback_value,ticket_id,user_id)
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+def get_all_tickets():
+    """Returns all tickets from the database."""
+    conn = database.get_db_connection()
+    try:
+        return pd.read_sql_query("SELECT * FROM tickets ORDER BY created_at DESC", conn)
+    finally:
+        conn.close()
+
+def get_user_tickets(user_id):
+    """Retrieves tickets for a specifie user."""
+    conn = database.get_db_connection()
+    try:
+        query = "SELECT * FROM tickets WHERE user_id = ? ORDER BY created_at DESC"
+        return pd.read_sql_query(query,conn,params=(user_id,))
+    finally:
+        conn.close()
+
+def get_ticket_by_id(ticket_id):
+    """Retrieves a single ticket by ID."""
+    conn = database.get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM tickets WHERE id = ?",(ticket_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+def get_admin_kpis():
+    conn = database.get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+        """
+        SELECT
+            COUNT(*) AS total_tickets,
+            SUM(CASE WHEN resolution_status = 'resolved' THEN 1 ELSE 0 END) AS resolved_tickets,
+            SUM(CASE WHEN resolution_status = 'unresolved' THEN 1 ELSE 0 END) AS unresolved_tickets,
+            SUM(CASE WHEN resolution_status = 'tentative' THEN 1 ELSE 0 END) AS tentative_tickets,
+            ROUND(AVG(confidence_score), 3) AS avg_confidence,
+            SUM(CASE WHEN feedback_value = 'helpful' THEN 1 ELSE 0 END) AS helpful_count,
+            SUM(CASE WHEN feedback_value = 'not_helpful' THEN 1 ELSE 0 END) AS not_helpful_count,
+        FROM tickets
+        """
+        )
+        row =dict(cursor.fetchone())
+        feedback_total  = (row["helpful_count"] or 0) +(row["not_helpful_count"] or 0)
+        row["helpful_rate"] = round((row["helpful_count"] or 0)/ feedback_total,3) if feedback_total else 0.0
+        return row
+    finally:
+        conn.close()
+
+def get_top_questions(limit=10):
+    conn = database.get_db_connection()
+    try:
+        return pd.read_sql_query(
+            """
+            SELECT normalized_query, category, COUNT(*) AS ticket_count, MAX(created_at)
+            FROM tickets
+            GROUP BY normalized_query, category
+            ORDER BY ticket_count DESC, lastest_seen DESC
+            LIMIT ?
+            """,
+            conn,
+            params=(limit,)
+        )
+    finally:
+        conn.close()
