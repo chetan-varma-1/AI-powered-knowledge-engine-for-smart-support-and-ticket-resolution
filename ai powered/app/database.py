@@ -11,6 +11,7 @@ TICKET_COLUMNS = {
     "confidence_score": "REAL DEFAULT 0.0",
     "resolution_status": "TEXT DEFAULT 'unresolved'",
     "retrieval_score": "REAL DEFAULT 0.0",
+    "top_retrieval_score": "REAL DEFAULT 0.0",
     "kb_context_found": "INTEGER DEFAULT 0",
     "gap_group_key": "TEXT",
     "normalized_query": "TEXT",

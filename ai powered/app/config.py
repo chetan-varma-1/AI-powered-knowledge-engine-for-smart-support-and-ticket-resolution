@@ -1,4 +1,5 @@
 import os
+import re
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -18,7 +19,13 @@ def load_app_env():
 
             key, value = line.split("=", 1)
             key = key.strip()
-            value = value.strip().strip('"').strip("'")
+            value = value.strip()
+            if value and not (
+                (value.startswith('"') and value.endswith('"'))
+                or (value.startswith("'") and value.endswith("'"))
+            ):
+                value = re.split(r"\s+#", value, maxsplit=1)[0].strip()
+            value = value.strip('"').strip("'")
             if key and key not in os.environ:
                 os.environ[key] = value
 

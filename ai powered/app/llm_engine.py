@@ -16,6 +16,13 @@ GENERIC_RESPONSE_PATTERNS = (
     "unable to determine",
     "please provide more details",
 )
+UNCERTAINTY_PATTERNS = (
+    "might be",
+    "could be",
+    "possibly",
+    "not sure",
+    "cannot confirm",
+)
 
 def check_model_availability():
     """Checks if the model is available locally, pulls if not."""
@@ -58,19 +65,54 @@ def _suggest_kb_filename(title, description, category):
     phrase = " ".join(tokens[:6]) or category or "knowledge gap"
     return f"{_slugify_filename(phrase)}_guide.md"
 
-def _calculate_confidence(retrieval_score, kb_context_found, resolution_text, had_error):
+def _response_quality_adjustment(resolution_text):
+    text = (resolution_text or "").strip()
+    if not text:
+        return -0.2
+
+    lowered = text.lower()
+    adjustment = 0.0
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    bullet_lines = [
+        line for line in lines
+        if line.startswith(("-", "*", "1.", "2.", "3.", "4.", "5."))
+    ]
+    if len(bullet_lines) >= 2:
+        adjustment += 0.08
+
+    if 80 <= len(text) <= 1200:
+        adjustment += 0.08
+    elif len(text) < 40:
+        adjustment -= 0.1
+
+    if re.search(r"\b(check|verify|restart|reboot|open|run|update|clear|enable|disable|reset)\b", lowered):
+        adjustment += 0.06
+
+    if any(pattern in lowered for pattern in GENERIC_RESPONSE_PATTERNS):
+        adjustment -= 0.22
+    if any(pattern in lowered for pattern in UNCERTAINTY_PATTERNS):
+        adjustment -= 0.12
+
+    return max(-0.35, min(0.25, adjustment))
+
+
+def _calculate_confidence(retrieval_score, top_retrieval_score, kb_context_found, resolution_text, had_error):
     if had_error:
         return 0.0
 
-    confidence = retrieval_score
-    if kb_context_found:
-        confidence += 0.2
-    if resolution_text and len(resolution_text.strip()) >= 80:
-        confidence += 0.1
+    retrieval_score = max(0.0, min(1.0, float(retrieval_score or 0.0)))
+    top_retrieval_score = max(0.0, min(1.0, float(top_retrieval_score or retrieval_score)))
 
-    lowered = resolution_text.lower()
-    if any(pattern in lowered for pattern in GENERIC_RESPONSE_PATTERNS):
-        confidence -= 0.2
+    confidence = 0.18
+    confidence += retrieval_score * 0.5
+    confidence += top_retrieval_score * 0.25
+    if kb_context_found:
+        confidence += 0.18
+    confidence += _response_quality_adjustment(resolution_text)
+
+    if not kb_context_found and top_retrieval_score < 0.15:
+        confidence = min(confidence, 0.55)
 
     return max(0.0, min(1.0, round(confidence, 3)))
 
@@ -82,6 +124,7 @@ def analyze_ticket(title, description, priority, category):
     retrieval = rag_engine.get_relevant_context(f"{title} {description}")
     context = retrieval.get("context_text", "")
     retrieval_score = retrieval.get("retrieval_score", 0.0)
+    top_retrieval_score = retrieval.get("top_retrieval_score", retrieval_score)
     kb_context_found = retrieval.get("kb_context_found", False)
 
     prompt = f"""
@@ -94,7 +137,9 @@ def analyze_ticket(title, description, priority, category):
     You are an automated support engine.
     Provide a resolution for the above ticket.
     - Be concise.
-    - Use bullet points.
+    - Use 3-5 bullet points.
+    - Include concrete steps with checks or commands where relevant.
+    - If context is insufficient, say what exact detail is missing in one line.
     - Do NOT mention "As an AI" or "As a support agent".
     - Just give the comparison or solution.
     
@@ -108,11 +153,15 @@ def analyze_ticket(title, description, priority, category):
         resolution_text = response['message']['content'].strip()
         confidence_score = _calculate_confidence(
             retrieval_score=retrieval_score,
+            top_retrieval_score=top_retrieval_score,
             kb_context_found=kb_context_found,
             resolution_text=resolution_text,
             had_error=False,
         )
-        resolved_threshold = config.get_float_env("AI_CONFIDENCE_THRESHOLD", 0.65)
+        resolved_threshold = config.get_float_env(
+            "AI_CONFIDENCE_THRESHOLD",
+            config.get_float_env("AI_CONFIDENC_THRESHOLD", 0.65),
+        )
         resolution_status = (
             "resolved" if confidence_score >= resolved_threshold else "tentative"
         )
@@ -122,6 +171,7 @@ def analyze_ticket(title, description, priority, category):
             "confidence_score": confidence_score,
             "resolution_status": resolution_status,
             "retrieval_score": retrieval_score,
+            "top_retrieval_score": top_retrieval_score,
             "kb_context_found": kb_context_found,
             "context_matches": retrieval.get("matches", []),
             "suggested_kb_filename": (
@@ -140,6 +190,7 @@ def analyze_ticket(title, description, priority, category):
             "confidence_score": 0.0,
             "resolution_status": "unresolved",
             "retrieval_score": retrieval_score,
+            "top_retrieval_score": top_retrieval_score,
             "kb_context_found": kb_context_found,
             "context_matches": retrieval.get("matches", []),
             "suggested_kb_filename": _suggest_kb_filename(title, description, category),
