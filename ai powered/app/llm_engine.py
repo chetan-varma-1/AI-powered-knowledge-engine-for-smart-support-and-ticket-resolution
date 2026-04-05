@@ -116,6 +116,25 @@ def _calculate_confidence(retrieval_score, top_retrieval_score, kb_context_found
 
     return max(0.0, min(1.0, round(confidence, 3)))
 
+
+def _determine_resolution_status(confidence_score):
+    resolved_threshold = config.get_float_env(
+        "AI_CONFIDENCE_THRESHOLD",
+        config.get_float_env("AI_CONFIDENC_THRESHOLD", 0.65),
+    )
+    unresolved_threshold = config.get_float_env("AI_UNRESOLVED_THRESHOLD", 0.45)
+
+    resolved_threshold = max(0.0, min(1.0, float(resolved_threshold)))
+    unresolved_threshold = max(0.0, min(1.0, float(unresolved_threshold)))
+    if unresolved_threshold >= resolved_threshold:
+        unresolved_threshold = max(0.0, round(resolved_threshold - 0.01, 3))
+
+    if confidence_score >= resolved_threshold:
+        return "resolved"
+    if confidence_score < unresolved_threshold:
+        return "unresolved"
+    return "tentative"
+
 def analyze_ticket(title, description, priority, category):
     """
     Uses the LLM to generate a resolution and AI quality metadata.
@@ -137,9 +156,13 @@ def analyze_ticket(title, description, priority, category):
     You are an automated support engine.
     Provide a resolution for the above ticket.
     - Be concise.
-    - Use 3-5 bullet points.
+    - Return valid Markdown only.
+    - Use 3-5 bullet points with `- ` as the bullet prefix.
     - Include concrete steps with checks or commands where relevant.
+    - Use fenced code blocks for commands when useful.
     - If context is insufficient, say what exact detail is missing in one line.
+    - Do not return HTML tags.
+    - Do not wrap the full response in quotes.
     - Do NOT mention "As an AI" or "As a support agent".
     - Just give the comparison or solution.
     
@@ -158,13 +181,7 @@ def analyze_ticket(title, description, priority, category):
             resolution_text=resolution_text,
             had_error=False,
         )
-        resolved_threshold = config.get_float_env(
-            "AI_CONFIDENCE_THRESHOLD",
-            config.get_float_env("AI_CONFIDENC_THRESHOLD", 0.65),
-        )
-        resolution_status = (
-            "resolved" if confidence_score >= resolved_threshold else "tentative"
-        )
+        resolution_status = _determine_resolution_status(confidence_score)
         return {
             "category": category,
             "resolution_text": resolution_text,
@@ -200,6 +217,6 @@ def analyze_ticket(title, description, priority, category):
 if __name__ == "__main__":
     # Test run
     # Ensure rag_engine is ready or mock it if needed for direct execution
-    analysis = analyze_ticket("Internet down", "My wifi is not connecting", "High", "Network")
+    analysis = analyze_ticket("Configuring IP Addressing", "How to Configure IP Addressing", "High", "Network")
     print(f"Category: {analysis['category']}")
     print(f"Resolution: {analysis['resolution_text']}")

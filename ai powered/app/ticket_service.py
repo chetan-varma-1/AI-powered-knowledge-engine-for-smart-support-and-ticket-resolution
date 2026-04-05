@@ -70,7 +70,8 @@ def _send_slack_alert(event_row):
         {
             "text": (
                 "⚠ Knowledge Gap Detected\n"
-                f"Top unresolved question: {event_row['display_query']}\n"
+                f"Latest status: {event_row['resolution_status']}\n"
+                f"Top question: {event_row['display_query']}\n"
                 f"Repeated: {event_row['occurrence_count']} times\n"
                 f"Suggested action: Add knowledge file {event_row['suggested_kb_filename']}"
             )
@@ -96,7 +97,15 @@ def _send_slack_alert(event_row):
         }
 
 
-def _upsert_knowledge_gap(cursor, ticket_id, category, normalized_query, confidence_score, suggested_kb_filename):
+def _upsert_knowledge_gap(
+    cursor,
+    ticket_id,
+    category,
+    normalized_query,
+    confidence_score,
+    suggested_kb_filename,
+    resolution_status,
+):
     gap_alert_threshold = get_gap_alert_threshold()
     gap_group_key = build_gap_group_key(category, normalized_query)
     display_query = normalized_query.title()
@@ -143,12 +152,22 @@ def _upsert_knowledge_gap(cursor, ticket_id, category, normalized_query, confide
             ),
         )
         last_alert_count = existing["last_alert_count"] or 0
-        if occurrence_count >= gap_alert_threshold and occurrence_count > last_alert_count:
+        should_alert_for_tentative = (
+            resolution_status == "tentative"
+            and occurrence_count >= gap_alert_threshold
+            and occurrence_count > last_alert_count
+        )
+        should_alert_for_unresolved = (
+            resolution_status == "unresolved"
+            and occurrence_count > last_alert_count
+        )
+        if should_alert_for_tentative or should_alert_for_unresolved:
             alert_result = _send_slack_alert(
                 {
                     "display_query": display_query,
                     "occurrence_count": occurrence_count,
                     "suggested_kb_filename": suggested_kb_filename,
+                    "resolution_status": resolution_status,
                 }
             )
             cursor.execute(
@@ -194,12 +213,17 @@ def _upsert_knowledge_gap(cursor, ticket_id, category, normalized_query, confide
                 confidence_score,
             ),
         )
-        if 1 >= gap_alert_threshold:
+        should_alert_for_tentative = (
+            resolution_status == "tentative" and 1 >= gap_alert_threshold
+        )
+        should_alert_for_unresolved = resolution_status == "unresolved"
+        if should_alert_for_tentative or should_alert_for_unresolved:
             alert_result = _send_slack_alert(
                 {
                     "display_query": display_query,
                     "occurrence_count": 1,
                     "suggested_kb_filename": suggested_kb_filename,
+                    "resolution_status": resolution_status,
                 }
             )
             cursor.execute(
@@ -282,6 +306,7 @@ def submit_ticket(title, description, category, priority, user_id):
                 normalized_query=normalized_query,
                 confidence_score=analysis["confidence_score"],
                 suggested_kb_filename=suggested_kb_filename,
+                resolution_status=analysis["resolution_status"],
             )
             cursor.execute(
                 "UPDATE tickets SET gap_group_key = ? WHERE id = ?",
